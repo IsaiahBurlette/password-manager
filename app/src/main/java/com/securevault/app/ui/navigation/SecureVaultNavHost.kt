@@ -2,10 +2,13 @@ package com.securevault.app.ui.navigation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -115,6 +118,17 @@ private fun MainScaffold(onLock: () -> Unit, onVaultWiped: () -> Unit) {
     val currentRoute = backStackEntry?.destination?.route
 
     Scaffold(
+        floatingActionButton = {
+            if (currentRoute == Routes.VAULT_LIST) {
+                FloatingActionButton(
+                    onClick = { innerNavController.navigate(Routes.entryEdit(null)) },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add password")
+                }
+            }
+        },
         bottomBar = {
             if (currentRoute == Routes.VAULT_LIST || currentRoute == Routes.GENERATOR || currentRoute == Routes.SETTINGS) {
                 NavigationBar {
