@@ -143,7 +143,7 @@ private fun MainScaffold(onLock: () -> Unit, onVaultWiped: () -> Unit) {
         NavHost(
             navController = innerNavController,
             startDestination = Routes.VAULT_LIST,
-            modifier = Modifier.padding(bottom = padding.calculateBottomPadding())
+            modifier = Modifier.padding(padding)
         ) {
             composable(Routes.VAULT_LIST) {
                 val entries by vaultViewModel.entries.collectAsState()

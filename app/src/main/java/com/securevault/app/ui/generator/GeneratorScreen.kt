@@ -138,7 +138,7 @@ fun GeneratorScreen(onSaveToVault: () -> Unit) {
                 .padding(top = 16.dp)
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
-                StrengthMeter(result = strength)
+                StrengthMeter(result = strength, showCrackTimes = false)
             }
         }
 
