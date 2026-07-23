@@ -101,6 +101,24 @@ class VaultRepository(private val dao: VaultDao) {
         return String(plain, Charsets.UTF_8)
     }
 
+    /** Decrypts every stored entry, for building a portable backup file. */
+    suspend fun exportAll(): List<DecryptedEntry> = dao.getAllOnce().map { decrypt(it) }
+
+    /** Inserts [entries] as new rows, encrypted under the current session key. */
+    suspend fun importEntries(entries: List<DecryptedEntry>) {
+        entries.forEach { entry ->
+            save(
+                id = null,
+                title = entry.title,
+                username = entry.username,
+                password = entry.password,
+                websiteUrl = entry.websiteUrl,
+                notes = entry.notes,
+                isFavorite = entry.isFavorite
+            )
+        }
+    }
+
     private fun decrypt(entry: VaultEntry): DecryptedEntry {
         val key = MasterKeyHolder.requireKey()
         val password = String(

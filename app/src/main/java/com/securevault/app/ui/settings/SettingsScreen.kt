@@ -1,5 +1,9 @@
 package com.securevault.app.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,9 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -30,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +48,10 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.securevault.app.vaultApp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.launch
 
 private data class LockOption(val label: String, val seconds: Int)
 private val LOCK_OPTIONS = listOf(
@@ -60,11 +71,44 @@ fun SettingsScreen(onVaultWiped: () -> Unit) {
         factory = remember { SettingsViewModelFactory(app.authManager, app.repository) }
     )
 
+    val scope = rememberCoroutineScope()
+
     var biometricEnabled by remember { mutableStateOf(app.authManager.isBiometricEnabled) }
     var autoLockSeconds by remember { mutableStateOf(app.authManager.autoLockSeconds) }
     var showChangePassword by remember { mutableStateOf(false) }
     var showWipeConfirm by remember { mutableStateOf(false) }
     var biometricError by remember { mutableStateOf<String?>(null) }
+
+    var showExportPassword by remember { mutableStateOf(false) }
+    var showImportPassword by remember { mutableStateOf(false) }
+    var pendingExportPassword by remember { mutableStateOf<CharArray?>(null) }
+    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val password = pendingExportPassword
+        pendingExportPassword = null
+        if (uri == null || password == null) return@rememberLauncherForActivityResult
+        viewModel.exportVault(password) { bytes ->
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                backupMessage = "Vault exported. Keep the file and its password safe -- you'll need both to restore it."
+            } catch (e: Exception) {
+                backupMessage = "Couldn't write the backup file."
+            }
+        }
+    }
+
+    val openBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            pendingImportUri = uri
+            showImportPassword = true
+        }
+    }
 
     fun enableBiometric() {
         val cipher = app.authManager.biometricEnrollCipher()
@@ -168,6 +212,40 @@ fun SettingsScreen(onVaultWiped: () -> Unit) {
             }
         }
 
+        SettingsSection(title = "Backup") {
+            Text(
+                text = "Export an encrypted copy of your vault to move it to a new phone, or import a backup you made earlier.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(
+                onClick = { showExportPassword = true },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+            ) {
+                Icon(Icons.Filled.Upload, contentDescription = null)
+                Text(" Export vault", modifier = Modifier.padding(start = 6.dp))
+            }
+            OutlinedButton(
+                onClick = {
+                    try {
+                        openBackupLauncher.launch(arrayOf("*/*"))
+                    } catch (e: ActivityNotFoundException) {
+                        backupMessage = "No file picker app is available on this device."
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+            ) {
+                Icon(Icons.Filled.Download, contentDescription = null)
+                Text(" Import vault", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+
         SettingsSection(title = "Danger zone") {
             Text(
                 text = "Deleting your vault permanently erases every saved password on this device. This cannot be undone.",
@@ -221,6 +299,68 @@ fun SettingsScreen(onVaultWiped: () -> Unit) {
             }
         )
     }
+
+    if (showExportPassword) {
+        ExportPasswordDialog(
+            onDismiss = { showExportPassword = false },
+            onConfirm = { password ->
+                pendingExportPassword = password.toCharArray()
+                showExportPassword = false
+                val filename = "securevault-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.svault"
+                try {
+                    createBackupLauncher.launch(filename)
+                } catch (e: ActivityNotFoundException) {
+                    pendingExportPassword = null
+                    backupMessage = "No file picker app is available on this device."
+                }
+            }
+        )
+    }
+
+    if (showImportPassword) {
+        ImportPasswordDialog(
+            onDismiss = {
+                showImportPassword = false
+                pendingImportUri = null
+            },
+            onConfirm = { password ->
+                val uri = pendingImportUri
+                showImportPassword = false
+                if (uri != null) {
+                    scope.launch {
+                        val bytes = try {
+                            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (bytes == null) {
+                            backupMessage = "Couldn't read that file."
+                        } else {
+                            viewModel.importVault(bytes, password.toCharArray()) { outcome ->
+                                backupMessage = when (outcome) {
+                                    is ImportOutcome.Success -> "Imported ${outcome.count} ${if (outcome.count == 1) "entry" else "entries"}."
+                                    ImportOutcome.WrongPassword -> "Incorrect backup password."
+                                    ImportOutcome.InvalidFile -> "That doesn't look like a SecureVault backup file."
+                                }
+                            }
+                        }
+                    }
+                }
+                pendingImportUri = null
+            }
+        )
+    }
+
+    if (backupMessage != null) {
+        AlertDialog(
+            onDismissRequest = { backupMessage = null },
+            title = { Text("Backup") },
+            text = { Text(backupMessage!!) },
+            confirmButton = {
+                TextButton(onClick = { backupMessage = null }) { Text("OK") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -270,6 +410,99 @@ private fun ChangePasswordDialog(onDismiss: () -> Unit, onConfirm: (String) -> U
                 onClick = { onConfirm(newPassword) },
                 enabled = newPassword.length >= 8 && newPassword == confirm
             ) { Text("Update") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun ExportPasswordDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    val mismatch = confirm.isNotEmpty() && password != confirm
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set a backup password") },
+        text = {
+            Column {
+                Text(
+                    text = "This encrypts the exported file. You'll need this exact password to import it later -- it does not have to match your master password.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Backup password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    colors = OutlinedTextFieldDefaults.colors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text("Confirm backup password") },
+                    singleLine = true,
+                    isError = mismatch,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    colors = OutlinedTextFieldDefaults.colors(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(password) },
+                enabled = password.length >= 6 && password == confirm
+            ) { Text("Choose file location") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun ImportPasswordDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Enter backup password") },
+        text = {
+            Column {
+                Text(
+                    text = "Enter the password this backup file was exported with.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Backup password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    colors = OutlinedTextFieldDefaults.colors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(password) },
+                enabled = password.isNotEmpty()
+            ) { Text("Import") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
