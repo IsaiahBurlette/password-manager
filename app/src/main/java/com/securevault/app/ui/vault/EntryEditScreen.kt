@@ -190,7 +190,7 @@ fun EntryEditScreen(
                         .fillMaxWidth()
                         .padding(top = 12.dp)
                 ) {
-                    StrengthMeter(result = strength, modifier = Modifier.padding(16.dp))
+                    StrengthMeter(result = strength, showCrackTimes = false, modifier = Modifier.padding(16.dp))
                 }
             }
 
